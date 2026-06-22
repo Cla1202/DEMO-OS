@@ -24,6 +24,7 @@
 #define SYSCALL_EXEC_NUMBER 16
 #define SYSCALL_WAIT_NUMBER 17
 #define SYSCALL_WRITE_HEX_NUMBER 18
+#define SYSCALL_GET_TIME_NUMBER 19
 
 // The maximum size of each argument passed to the exec systemcall
 #define SYSCALL_EXEC_ARGUMENT_DIMENSION 64

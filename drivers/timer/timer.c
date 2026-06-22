@@ -2,7 +2,7 @@
 #include "../../arch/mmio.h"
 #include "../../libs/scheduler.h"
 
-const unsigned int interval = 200000;
+const unsigned int interval = 200000; // 200ms
 unsigned int curVal = 0;
 
 void timer_init(void) {

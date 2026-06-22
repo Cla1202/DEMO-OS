@@ -16,7 +16,9 @@ int copy_process(unsigned long clone_flags, unsigned long function, unsigned lon
 
   struct PCB* new_process;
   new_process = (struct PCB*)allocate_kernel_page();
-  if (!new_process) {
+  
+  // Initial check: do we have memory and are we within the process limit?
+  if (!new_process || n_processes >= N_PROCESSES) {
     return -1;
   }
 
@@ -41,13 +43,17 @@ int copy_process(unsigned long clone_flags, unsigned long function, unsigned lon
     child_registers->registers[0] = 0;
 
     copy_virtual_memory(new_process);
- }
+  }
 
+  // Create and assign the PID and all parameters to the PCB
   int process_id = n_processes;
   new_process->flags = clone_flags;
   new_process->priority = current_process->priority;
   new_process->state = PROCESS_RUNNING;
   new_process->counter = current_process->priority;
+  
+  new_process->counter = 10;
+  
   new_process->preempt_disabled = 1;
   new_process->pid = process_id;
 
@@ -55,8 +61,14 @@ int copy_process(unsigned long clone_flags, unsigned long function, unsigned lon
   new_process->cpu_context.pc = (unsigned long)ret_from_fork;
   new_process->cpu_context.sp = (unsigned long)child_registers;
 
-  processes[process_id] = new_process;
-  n_processes++;
+  // ====================================================
+  // CRITICAL MODIFICATION: SCHEDULER ABSTRACTION
+  // ====================================================
+  // Now that the PCB has its PID and data, we use the official 
+  // scheduler function to register it in the system!
+  if (add_process_to_scheduler(new_process) < 0) {
+      return -1; // Fails if the process array is full
+  }
 
   preempt_enable();
 
@@ -76,6 +88,9 @@ int move_to_user_mode(unsigned long start, unsigned long size, unsigned long pc)
 
   copy_code(current_process, (void*)start, size);
 
+  // Save the byte length of the Init process (e.g., arguments_test, shell, etc.)
+  current_process->priority = size;
+  
   set_pgd(current_process->mm.pgd);
   return 0;
 }

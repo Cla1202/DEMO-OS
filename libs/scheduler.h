@@ -112,6 +112,6 @@ extern void schedule();
 extern void switch_to_process(struct PCB *);
 extern void handle_timer_tick();
 extern void exit_process();
-
+extern int add_process_to_scheduler(struct PCB* process);
 #endif
 #endif

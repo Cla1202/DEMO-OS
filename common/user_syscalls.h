@@ -74,4 +74,6 @@ void call_syscall_receive_message(char* body);
 // Sends a signal to another process
 int call_syscall_send_signal(int destination_pid, int signal_flag);
 
+unsigned long call_syscall_get_time();
+
 #endif

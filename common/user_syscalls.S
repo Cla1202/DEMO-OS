@@ -117,6 +117,12 @@ call_syscall_wait:
     mov w8, #SYSCALL_WAIT_NUMBER
     svc #0
     ret
+    
+.globl call_syscall_get_time
+call_syscall_get_time:
+    mov x8, SYSCALL_GET_TIME_NUMBER      
+    svc #0
+    ret
 
 thread_start:
     mov x29, 0

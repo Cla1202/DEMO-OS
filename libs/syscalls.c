@@ -9,6 +9,7 @@
 #include "../common/syscalls_types.h"
 #include "../common/memory.h"
 #include "filesystem.h"
+#include "../arch/mmio.h"
 
 #define MAX_PATH 128
 
@@ -174,7 +175,9 @@ int syscall_get_next_entry(int file_descriptor, FatEntryInfo *entry_info) {
 }
 
 void syscall_yield() {
-  schedule();
+  current_process->counter = 0; 
+  
+  schedule();                 
 }
 
 int syscall_input(char *buffer, int len) {
@@ -305,17 +308,28 @@ int syscall_exec(char* path, unsigned long* trap_frame, int n_arguments, char ar
   return 0;
 }
 
+
+// SYSCALL WAIT
 int syscall_wait(int pid) {
   struct PCB* destination_process = search_process(pid);
   if (destination_process == NULL) {
     return -1;
   }
-
+  
+  if (destination_process->state == PROCESS_ZOMBIE) {
+    return 0;
+  }
   current_process->state = PROCESS_WAITING_ANOTHER_PROCESS;
   current_process->pid_to_wait = pid;
   schedule();
 
   return 0;
+}
+
+unsigned long syscall_get_time() {
+  // Indirizzo base del registro TIMER_CLO su Raspberry Pi 3
+  // Restituisce i microsecondi trascorsi dall'avvio
+  return mmio_read(0x00003004);
 }
 
 void syscall_dispatcher(unsigned long* registers) {
@@ -383,12 +397,15 @@ void syscall_dispatcher(unsigned long* registers) {
     case SYSCALL_WAIT_NUMBER:
       registers[0] = syscall_wait((int)registers[0]);  
       break;
+    case SYSCALL_GET_TIME_NUMBER:
+      registers[0] = syscall_get_time();
+      break;
   }
 }
 
 struct PCB* search_process(int pid) {
   for (int i = 0; i < N_PROCESSES; i++) {
-      if (processes[i]->pid == pid) {
+      if (processes[i] != NULL && processes[i]->pid == pid) {
           return processes[i];
       }
   }
