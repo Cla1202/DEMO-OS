@@ -90,6 +90,7 @@ struct PCB {
   int pending_signals;
 
   int pid_to_wait;
+  struct PCB* next_ready;
 };
 
 #define PROCESS_RUNNING 1
@@ -100,7 +101,7 @@ struct PCB {
 #define PROCESS_WAITING_ANOTHER_PROCESS 6
 #define PROCESS_STOPPED 7
 
-#define INIT_PROCESS {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, 1, 1, 0, 0, 0, {}, {0, 0, {}, 0, {}}, {}, 0, -1}
+#define INIT_PROCESS {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, 1, 1, 0, 0, 0, {}, {0, 0, {}, 0, {}}, {}, 0, -1, NULL}
 
 extern struct PCB *current_process;
 extern struct PCB *processes[N_PROCESSES];
@@ -113,5 +114,6 @@ extern void switch_to_process(struct PCB *);
 extern void handle_timer_tick();
 extern void exit_process();
 extern int add_process_to_scheduler(struct PCB* process);
+extern void enqueue_process(struct PCB* process);
 #endif
 #endif

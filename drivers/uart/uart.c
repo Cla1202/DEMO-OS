@@ -122,6 +122,8 @@ void handle_uart_irq(void) {
         for (int i = 0; i < n_processes; i++) {
           if (processes[i]->state == PROCESS_WAITING_UART_INPUT) {
             processes[i]->state = PROCESS_RUNNING;
+            // Rimettiamo il processo della shell in coda!
+            enqueue_process(processes[i]);
           }
         }
       }
