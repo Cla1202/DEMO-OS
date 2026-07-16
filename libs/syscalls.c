@@ -175,9 +175,9 @@ int syscall_get_next_entry(int file_descriptor, FatEntryInfo *entry_info) {
 }
 
 void syscall_yield() {
-  current_process->counter = 0; 
-  
-  schedule();                 
+  current_process->counter = 0;
+
+  schedule();
 }
 
 int syscall_input(char *buffer, int len) {
