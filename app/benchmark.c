@@ -3,10 +3,6 @@
 
 // Declare the function signature to make it known to main()
 void print_int(unsigned long num);
-
-// ==========================================
-// MAIN PROGRAM (MUST BE AT THE TOP!)
-// ==========================================
 void main() {
     unsigned long start_time = call_syscall_get_time();
     
