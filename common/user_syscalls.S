@@ -120,7 +120,13 @@ call_syscall_wait:
     
 .globl call_syscall_get_time
 call_syscall_get_time:
-    mov x8, SYSCALL_GET_TIME_NUMBER      
+    mov x8, SYSCALL_GET_TIME_NUMBER
+    svc #0
+    ret
+
+.globl call_syscall_set_sched_param
+call_syscall_set_sched_param:
+    mov w8, #SYSCALL_SET_SCHED_PARAM_NUMBER
     svc #0
     ret
 

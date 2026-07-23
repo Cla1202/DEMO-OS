@@ -11,7 +11,7 @@
 // If clone_flags is PF_KTHREAD, the process will execute the given function; otherwhise it will be
 // a copy of the current process
 int copy_process(unsigned long clone_flags, unsigned long function, unsigned long argument) {
-  // I disable the preempt to avoid this function to be interrupted
+  // I disable the preemption to avoid this function to be interrupted
   preempt_disable();
 
   struct PCB* new_process;
@@ -49,11 +49,29 @@ int copy_process(unsigned long clone_flags, unsigned long function, unsigned lon
   int process_id = n_processes;
   new_process->flags = clone_flags;
   new_process->priority = current_process->priority;
-  new_process->state = PROCESS_RUNNING;
-  new_process->counter = current_process->priority;
-  
+  // The new process is READY (runnable): it will become RUNNING only when the
+  // scheduler dispatches it in switch_to_process
+  new_process->state = PROCESS_READY;
   new_process->counter = 10;
+
+  // The estimate of the child's next CPU burst is inherited from the parent: it
+  // is the best guess available until the child gets measured on its own bursts
+  new_process->est_burst = current_process->est_burst;
+  // No tick consumed yet in the current burst
+  new_process->burst_ticks = 0;
+
+  // The multilevel queue priority is chosen at creation: the child inherits the
+  // parent's level (the init process is at the highest priority, 0, so that is
+  // the default). It can be changed on the PCB before the first enqueue
+  new_process->queue_priority = current_process->queue_priority;
+
+  // Lottery tickets are inherited from the parent as well (OSTEP chap. 9): the
+  // default is the 10 tickets of the init process, and the field can be changed
+  // on the PCB to give a process a larger or smaller CPU share
+  new_process->tickets = current_process->tickets;
   
+  // The child is born with the preemption disabled: schedule_tail re-enables
+  // it at the end of its first context switch
   new_process->preempt_disabled = 1;
   new_process->pid = process_id;
 
@@ -88,9 +106,6 @@ int move_to_user_mode(unsigned long start, unsigned long size, unsigned long pc)
 
   copy_code(current_process, (void*)start, size);
 
-  // Save the byte length of the Init process (e.g., arguments_test, shell, etc.)
-  current_process->priority = size;
-  
   set_pgd(current_process->mm.pgd);
   return 0;
 }
