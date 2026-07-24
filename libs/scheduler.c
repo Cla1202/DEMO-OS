@@ -9,6 +9,9 @@
 // Include the header for memory-mapped IO (the lottery scheduler reads the
 // free-running system timer to seed its random number generator)
 #include "../arch/mmio.h"
+// Include the shared syscall definitions (SCHED_PARAM_* selectors used by
+// sched_set_param, shared with the user side of the set_sched_param syscall)
+#include "../common/syscalls_types.h"
 
 // Initialize the init process (the idle task) using a predefined macro
 static struct PCB init_process = INIT_PROCESS;
@@ -38,29 +41,30 @@ typedef struct {
 static ProcessQueue ready_queue = QUEUE_INIT;
 // Define the array of queues shared by the multilevel algorithms (MLQ and MLFQ),
 // scanned from level 0 (highest priority) to n_levels - 1 (lowest priority)
-static ProcessQueue ml_queues[ML_MAX_LEVELS] = {QUEUE_INIT, QUEUE_INIT, QUEUE_INIT};
+static ProcessQueue ml_queues[ML_MAX_LEVELS] = {QUEUE_INIT, QUEUE_INIT, QUEUE_INIT, QUEUE_INIT, QUEUE_INIT};
 // Array to track the current queue level of each process by its PID: for MLQ it
 // never changes after creation, for MLFQ it follows demotions and boosts
 static int queue_level[N_PROCESSES] = {0};
 
 // --- Multilevel policies: MLQ and MLFQ are the same engine with different numbers ---
-// MLQ: two fixed queues (foreground, quantum 10; background, quantum 20 to reduce
-// context switches for batch work) and a null migration policy
+// MLQ: five fixed queues, one per priority level (0 = highest); the quantum
+// grows as the priority drops (lower priority = batch work, fewer context
+// switches) and the migration policy is null: a process never changes queue
 // ref: OSTEP cap. 8: pages.cs.wisc.edu/~remzi/OSTEP/cpu-sched-mlfq.pdf
 // ref: github.com/remzi-arpacidusseau/ostep-homework/tree/master/cpu-sched-mlfq
 static const MultilevelPolicy ml_policy_mlq = {
-    .n_levels = 2,
-    .quantum = {10, 20, 0},
+    .n_levels = 5,
+    .quantum = {10, 12, 14, 16, 20},
     .demote_on_expiry = 0,
     .boost_period = 0,
 };
-// MLFQ: three queues with growing quanta (CPU-bound processes sink to the bottom
+// MLFQ: five queues with growing quanta (CPU-bound processes sink to the bottom
 // where the slice is longer), demotion on quantum expiry and periodic boost
 static const MultilevelPolicy ml_policy_mlfq = {
-    .n_levels = 3,
-    .quantum = {5, 10, 20},
+    .n_levels = 5,
+    .quantum = {5, 8, 10, 15, 20},
     .demote_on_expiry = 1,
-    .boost_period = 1000,
+    .boost_period = MLFQ_BOOST_PERIOD,
 };
 
 // =========================================================================
@@ -205,11 +209,11 @@ static void _enqueue_sjf(struct PCB* process) {
 }
 
 // --- MLQ / MLFQ: insertion into the queue matching the process's current level ---
-// The starting level comes from the queue_class field of the PCB, chosen at
-// process creation (see fork.c and add_process_to_scheduler): it replaces the
-// old PID-parity criterion that gave the user no control over the priority of
-// the processes it creates (PIDs are assigned automatically). For MLQ the level
-// never changes afterwards; for MLFQ it follows demotions and boosts
+// One queue per priority level: the starting level comes from the
+// queue_priority field of the PCB, chosen at process creation (see fork.c and
+// add_process_to_scheduler). It replaces the old PID-parity criterion that gave
+// the user no control over the priority of the processes it creates. For MLQ
+// the level never changes afterwards; for MLFQ it follows demotions and boosts
 static void _enqueue_multilevel(struct PCB* process) {
     // Enqueue the process into the queue corresponding to its current level
     enqueue_process_to(&ml_queues[queue_level[process->pid]], process);
@@ -240,9 +244,10 @@ int add_process_to_scheduler(struct PCB* process) {
     processes[process->pid] = process;
 
     // The starting level of the multilevel algorithms comes from the process's
-    // queue_class (foreground = 0, the highest priority: this preserves the MLFQ
-    // rule that new processes start at the top), clamped to the levels available
-    int start_level = process->queue_class;
+    // queue_priority (one queue per priority level, 0 = highest: a process at
+    // level 0 preserves the MLFQ rule of starting at the top), clamped to the
+    // levels available
+    int start_level = process->queue_priority;
     // Guard against classes outside the range of existing queues
     if (start_level < 0) start_level = 0;
     if (start_level >= ML_MAX_LEVELS) start_level = ML_MAX_LEVELS - 1;
@@ -262,6 +267,61 @@ int add_process_to_scheduler(struct PCB* process) {
     n_processes++;
     // Return 0 on success
     return 0;
+}
+
+// Kernel API to change one static scheduling parameter of a process. Processes
+// are created all equal (the child inherits the parent's parameters, see
+// fork.c): this is the single entry point through which they are differentiated,
+// following the POSIX scheme where the priority is set AFTER the fork by whoever
+// has the information (nice()/setpriority()), generalized to one selector per
+// algorithm like Linux's sched_setattr. Exposed to user programs by the
+// set_sched_param syscall.
+// ref: man 2 setpriority (POSIX), man 2 sched_setattr (Linux)
+int sched_set_param(struct PCB* process, int param, long value) {
+    // Ignore invalid targets (the idle init process is not configurable)
+    if (!process || process == &init_process) return -1;
+
+    // Select the parameter to change
+    switch (param) {
+        // Static priority, used by priority aging to recharge the counter at
+        // every epoch end: the new value simply takes effect at the next epoch
+        case SCHED_PARAM_PRIORITY:
+            // A positive priority is required (it is the recharge base)
+            if (value < 1) return -1;
+            process->priority = value;
+            return 0;
+
+        // Lottery tickets: read at every draw, the new share is immediate
+        case SCHED_PARAM_TICKETS:
+            // At least one ticket, so the process can always win a draw
+            if (value < 1) return -1;
+            process->tickets = value;
+            return 0;
+
+        // Multilevel queue level (one queue per priority level, 0 = highest)
+        case SCHED_PARAM_QUEUE_PRIORITY: {
+            // Reject levels outside the existing queues
+            if (value < 0 || value >= ML_MAX_LEVELS) return -1;
+            // Clamp to the levels actually used by the active multilevel
+            // policy, if any (same rule applied at process creation)
+            if (active_algorithm->ml_policy && value >= active_algorithm->ml_policy->n_levels) {
+                value = active_algorithm->ml_policy->n_levels - 1;
+            }
+            // The tracked level must follow the new priority: guard the double
+            // update against a timer tick rescheduling between the two writes
+            preempt_disable();
+            process->queue_priority = value;
+            // The migration is logical only: if the process is physically
+            // sitting in a queue of the old level it will be picked from there
+            // one last time, and re-enqueued at the new level afterwards
+            queue_level[process->pid] = value;
+            preempt_enable();
+            return 0;
+        }
+    }
+
+    // Unknown selector
+    return -1;
 }
 
 // These two functions are a critical-section guard for the scheduler and its
@@ -720,7 +780,7 @@ const SchedAlgorithm sched_priority_aging = {
     .is_preemptive = 1,
 };
 
-// --- MLQ: two fixed-priority queues (foreground/background), preemptive ---
+// --- MLQ: one fixed queue per priority level (see ml_policy_mlq), preemptive ---
 // Same engine as MLFQ, parametrized with a null migration policy
 const SchedAlgorithm sched_mlq = {
     .enqueue = _enqueue_multilevel,
@@ -730,7 +790,7 @@ const SchedAlgorithm sched_mlq = {
     .ml_policy = &ml_policy_mlq,
 };
 
-// --- MLFQ: three feedback queues with demotion and periodic boost, preemptive ---
+// --- MLFQ: one feedback queue per priority level, with demotion and periodic boost ---
 const SchedAlgorithm sched_mlfq = {
     .enqueue = _enqueue_multilevel,
     .pick_next = _schedule_multilevel,

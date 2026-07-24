@@ -91,11 +91,14 @@ struct PCB {
   // Timer ticks consumed so far in the current CPU burst (the measurement starts
   // when the process receives the CPU and ends when it blocks)
   long burst_ticks;
-  // Multilevel queue class (QUEUE_CLASS_FOREGROUND / QUEUE_CLASS_BACKGROUND):
-  // chosen at process creation (the child inherits the parent's class) and used
-  // by MLQ to pick the fixed queue. It replaces the old PID-parity criterion,
-  // which gave the user no control since PIDs are assigned automatically
-  int queue_class;
+  // Priority level for the multilevel queue algorithms: each queue corresponds
+  // to exactly one priority (0 = highest, ML_MAX_LEVELS-1 = lowest) and every
+  // process carries the priority of the queue it belongs to. Chosen at process
+  // creation (the child inherits the parent's level): MLQ keeps it fixed
+  // forever, MLFQ uses it as the starting level before demotions and boosts.
+  // It generalizes the old foreground/background pair to N levels and replaces
+  // the PID-parity criterion, which gave the user no control over the priority
+  int queue_priority;
   // Lottery scheduling tickets (OSTEP, chap. 9 "Proportional Share"): at every
   // scheduling decision a winning ticket is drawn, so the expected CPU share of
   // a process is tickets / total tickets of the runnable processes. Chosen at
@@ -135,21 +138,30 @@ struct PCB {
 // re-enqueued
 #define PROCESS_READY 8
 
-// Classes for the multilevel queue algorithms (field queue_class of the PCB)
-#define QUEUE_CLASS_FOREGROUND 0
-#define QUEUE_CLASS_BACKGROUND 1
+// Highest priority level for the queue_priority field of the PCB: one queue per
+// priority level, from 0 (highest) down to n_levels - 1 (lowest, see the
+// MultilevelPolicy below)
+#define QUEUE_PRIORITY_HIGHEST 0
 
-#define INIT_PROCESS {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, 1, 1, 0, 0, QUEUE_CLASS_FOREGROUND, 10, 0, 0, 0, {}, {0, 0, {}, 0, {}}, {}, 0, -1, NULL}
+#define INIT_PROCESS {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, 0, 1, 1, 0, 0, QUEUE_PRIORITY_HIGHEST, 10, 0, 0, 0, {}, {0, 0, {}, 0, {}}, {}, 0, -1, NULL}
 
 // =========================================================================
 // MULTILEVEL QUEUE POLICY
 // =========================================================================
-// MLQ and MLFQ share a single implementation: an array of priority queues
-// scanned from level 0 (highest priority) downwards. What distinguishes them is
-// only this set of parameters: number of levels, time quantum per level and the
-// migration rules. MLQ is the degenerate case with a null migration policy:
-// every process stays forever in the queue chosen by its queue_class.
-#define ML_MAX_LEVELS 3
+// Anti-starvation boost period of the MLFQ policy, in timer ticks: with the
+// 10 ms system tick (TIMER_PERIOD in drivers/timer/timer.h) 300 ticks are 3
+// seconds, the order of magnitude OSTEP suggests for the period S of Rule 5
+// ("after some time period S, move all the jobs to the topmost queue")
+#define MLFQ_BOOST_PERIOD 300
+
+// MLQ and MLFQ share a single implementation: an array of priority queues, one
+// queue per priority level, scanned from level 0 (highest priority) downwards.
+// Every process carries in queue_priority the level of the queue it belongs to.
+// What distinguishes the two algorithms is only this set of parameters: number
+// of levels, time quantum per level and the migration rules. MLQ is the
+// degenerate case with a null migration policy: every process stays forever in
+// the queue chosen by its queue_priority.
+#define ML_MAX_LEVELS 5
 typedef struct {
   // Number of priority levels actually used (at most ML_MAX_LEVELS)
   int n_levels;
@@ -197,6 +209,14 @@ extern const SchedAlgorithm sched_mlfq;
 extern struct PCB *current_process;
 extern struct PCB *processes[N_PROCESSES];
 extern int n_processes;
+
+// Kernel API to change one static scheduling parameter of a process (see the
+// SCHED_PARAM_* selectors in common/syscalls_types.h). It is the single entry
+// point used by the set_sched_param syscall and available to kernel code; the
+// scheduler owns it because only the scheduler knows the invariants to protect
+// (e.g. the reconciliation between queue_priority and the current queue level).
+// ref: man 2 setpriority (POSIX), man 2 sched_setattr (Linux)
+extern int sched_set_param(struct PCB* process, int param, long value);
 
 // Critical-section guard of the scheduler: code between preempt_disable() and
 // preempt_enable() cannot be preempted by the timer tick. This is a protection

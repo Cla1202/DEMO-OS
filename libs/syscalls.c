@@ -326,6 +326,22 @@ int syscall_wait(int pid) {
   return 0;
 }
 
+// SYSCALL SET SCHED PARAM
+// Sets one static scheduling parameter (priority, tickets or queue priority,
+// see the SCHED_PARAM_* selectors) of the process identified by pid. This is
+// how processes with different priorities are created: the parent forks and
+// then configures the child, like the POSIX nice()/setpriority() scheme.
+// The handler only resolves the pid: validation and the actual update belong
+// to the scheduler (sched_set_param), which owns the invariants to protect
+int syscall_set_sched_param(int pid, int param, int value) {
+  struct PCB* destination_process = search_process(pid);
+  if (destination_process == NULL) {
+    return -1;
+  }
+
+  return sched_set_param(destination_process, param, value);
+}
+
 unsigned long syscall_get_time() {
   // Indirizzo base del registro TIMER_CLO su Raspberry Pi 3
   // Restituisce i microsecondi trascorsi dall'avvio
@@ -399,6 +415,9 @@ void syscall_dispatcher(unsigned long* registers) {
       break;
     case SYSCALL_GET_TIME_NUMBER:
       registers[0] = syscall_get_time();
+      break;
+    case SYSCALL_SET_SCHED_PARAM_NUMBER:
+      registers[0] = syscall_set_sched_param((int)registers[0], (int)registers[1], (int)registers[2]);
       break;
   }
 }

@@ -60,10 +60,10 @@ int copy_process(unsigned long clone_flags, unsigned long function, unsigned lon
   // No tick consumed yet in the current burst
   new_process->burst_ticks = 0;
 
-  // The multilevel queue class is chosen at creation: the child inherits the
-  // parent's class (the init process is FOREGROUND, so that is the default).
-  // It can be changed on the PCB before the process is first enqueued
-  new_process->queue_class = current_process->queue_class;
+  // The multilevel queue priority is chosen at creation: the child inherits the
+  // parent's level (the init process is at the highest priority, 0, so that is
+  // the default). It can be changed on the PCB before the first enqueue
+  new_process->queue_priority = current_process->queue_priority;
 
   // Lottery tickets are inherited from the parent as well (OSTEP chap. 9): the
   // default is the 10 tickets of the init process, and the field can be changed
